@@ -1,53 +1,72 @@
-# Mindset
+# Flake Agent
 
-You are a senior architect with 20 years of experience across all software domains.
+AI agent that identifies flaky tests by analyzing patterns across synthetic Vitest JSON runs.
+Phase 1: identification only. No triage or remediation.
 
-- Gather thorough information with tools before solving
-- Work in explicit steps - ask clarifying questions when uncertain
-- BE CRITICAL - validate assumptions, don't trust code blindly
-- MINIMALISM ABOVE ALL - less code is better code
+## Commands
 
-# Search Protocol
+```bash
+npm install              # install all dependencies
+npm run build            # tsc → dist/
+npm run test:run         # vitest run (single pass, non-interactive)
+npm run lint             # eslint src/
+npm run format           # prettier --write src/
+```
 
-- Use available code research tools to learn the surrounding code style, architecture and module responsibilities
-- PREFER THE CODE RESEARCH TOOLING OVER ALL SUB AGENTS
-- Use tools to read documentation and research relevant background for the task
-- Search for best practices, prior art, and technical context with research_iteratively
-- Multiple targeted searches > one broad search
+Use `npm run test:run` not `npm test` — the latter starts vitest in watch mode which hangs in CI and agent contexts.
 
-# Architecture First
+## Tech Stack
 
-LEARN THE SURROUNDING ARCHITECTURE BEFORE CODING.
+- TypeScript (strict, ES2022, ESNext modules, bundler resolution)
+- Vitest for testing
+- AI SDK (`ai` package) for the agent loop (ToolLoopAgent pattern)
+- Zod for schema validation
+- Node.js runtime, ES modules (`"type": "module"` in package.json)
 
-- Understand the big picture and how components fit
-- Find and reuse existing code - never duplicate
-- When finding duplicate responsibilities, refactor to shared core
-- Match surrounding patterns and style
+## Architecture
 
-# Coding Standards
+Three planned packages (currently flat, workspace migration pending):
 
-KISS - Keep It Simple:
+| Package | Responsibility | Key Interface |
+|---------|---------------|---------------|
+| simulator | Generates synthetic Vitest JSON test runs with configurable flake patterns | Produces `VitestJsonOutput` with ground truth |
+| agent | Long-running process that analyzes runs and identifies flaky tests | Consumes runs, produces `FlakeReport` |
+| eval | Measures agent accuracy (precision, recall, F1) against ground truth | Consumes reports + ground truth, produces metrics |
 
-- Write minimal code that compiles and lints cleanly
-- Fix bugs by deleting code when possible
-- Optimize for readability and maintenance
-- No over-engineering, no temporary compatibility layers
-- No silent errors - failures must be explicit and visible
-- Run tests after major changes
-- Document inline when necessary
+Data flows one direction: simulator → agent → eval.
 
-# Operational Rules
+ADRs in `docs/adr/` record key decisions. Read relevant ADRs before changing architecture.
 
-- Time-box operations that could hang
-- Use flat directories with grep-friendly naming
-- Point out unproductive paths directly
+## Vitest JSON Format
 
-# Critical Constraints
+The simulator produces and the agent consumes the Vitest JSON reporter format. Key fields:
 
-- NEVER Commit without explicit request
-- NEVER Leave temporary/backup files (we have version control)
-- NEVER Hardcode keys or credentials
-- NEVER Assume your code works - always verify
-- ALWAYS Clean up after completing tasks
-- ALWAYS Produce clean code first time - no temporary backwards compatibility
-- ALWAYS Use sleep for waiting, not polling
+- `testResults[].assertionResults[].status` — "passed" | "failed" | "skipped"
+- `testResults[].assertionResults[].fullName` — unique test identifier
+- `testResults[].assertionResults[].duration` — milliseconds
+- `testResults[].assertionResults[].failureMessages` — array of error strings
+
+See ADR-0002 for the full schema and rationale.
+
+## Flake Patterns to Support
+
+The simulator must generate these failure modes (each has distinct detection signals):
+
+- **Timing-dependent**: race conditions, timeouts — look for duration variance
+- **Resource-dependent**: port conflicts, file locks — look for specific error messages
+- **Order-dependent**: test pollution, shared state — look for pass/fail correlation with run order
+- **Intermittent**: network, external services — look for random fail distribution
+
+## Coding Conventions
+
+- Imports: use `.js` extensions in TypeScript imports (required by ESNext module resolution)
+- Schemas: define with Zod, infer TypeScript types with `z.infer<typeof Schema>`
+- Errors: throw typed errors, never swallow silently
+- Tests: colocate test files as `*.test.ts` next to source files
+- No default exports except where required by a framework
+
+## Gotchas
+
+- `tsconfig.json` uses `"moduleResolution": "bundler"` — this means bare specifier imports resolve differently than Node16. Check import paths if you get resolution errors.
+- The `ai` package (AI SDK) has a streaming-first API. Use `generateText()` for non-streaming agent loops.
+- Vitest JSON output uses `startTime` as Unix epoch milliseconds, not ISO strings.
